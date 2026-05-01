@@ -14,6 +14,7 @@ export default function PlayPage() {
   const [game, setGame] = useState(null);
   const [me, setMe] = useState(null);
   const [myAnswer, setMyAnswer] = useState(null);
+  const [revealAnswer, setRevealAnswer] = useState(null);
   const [error, setError] = useState(null);
   const [timeLeft, setTimeLeft] = useState(0);
 
@@ -75,11 +76,26 @@ export default function PlayPage() {
     }
   }, [game?.id, playerId]);
 
-  // Reset answer state when question changes
+  // Reset answer state when a new question starts; fetch reveal record on reveal
   useEffect(() => {
     if (!game) return;
-    setMyAnswer(null);
-  }, [game?.current_question, game?.status]);
+    if (game.status === "question") {
+      setMyAnswer(null);
+      setRevealAnswer(null);
+      return;
+    }
+    if (game.status === "reveal" && playerId && game.current_question >= 0) {
+      (async () => {
+        const { data } = await supabase
+          .from("answers")
+          .select("*")
+          .eq("player_id", playerId)
+          .eq("question_index", game.current_question)
+          .maybeSingle();
+        setRevealAnswer(data || { skipped: true });
+      })();
+    }
+  }, [game?.current_question, game?.status, playerId]);
 
   // Countdown timer mirror
   useEffect(() => {
@@ -138,8 +154,8 @@ export default function PlayPage() {
   return (
     <main className="flex-1 flex flex-col p-4 bg-gradient-to-br from-indigo-600 to-purple-700 text-white">
       <header className="flex justify-between items-center mb-4">
-        <span className="font-semibold">{me.name}</span>
-        <span className="font-mono">{me.score} pts</span>
+        <span className="font-semibold text-lg">{me.name}</span>
+        <span className="font-mono text-xl bg-white/15 px-3 py-1 rounded-full">{me.score} pts</span>
       </header>
 
       {game.status === "lobby" && (
@@ -161,12 +177,7 @@ export default function PlayPage() {
       )}
 
       {game.status === "reveal" && (
-        <div className="flex-1 flex items-center justify-center text-center">
-          <div>
-            <p className="text-xl mb-3">Get ready for the next question</p>
-            <p className="text-4xl font-bold">{me.score} pts</p>
-          </div>
-        </div>
+        <RevealFeedback revealAnswer={revealAnswer} totalScore={me.score} />
       )}
 
       {game.status === "finished" && (
@@ -179,6 +190,40 @@ export default function PlayPage() {
         </div>
       )}
     </main>
+  );
+}
+
+function RevealFeedback({ revealAnswer, totalScore }) {
+  const noAnswer = !revealAnswer || revealAnswer.skipped;
+  const isCorrect = revealAnswer && revealAnswer.is_correct;
+  const points = revealAnswer ? revealAnswer.points || 0 : 0;
+
+  return (
+    <div className="flex-1 flex items-center justify-center text-center">
+      <div className="space-y-6">
+        {noAnswer ? (
+          <>
+            <p className="text-4xl font-bold text-indigo-100">⏰ No answer</p>
+            <p className="text-xl text-indigo-200">+0 pts this round</p>
+          </>
+        ) : isCorrect ? (
+          <>
+            <p className="text-5xl font-bold text-green-300">✓ Correct!</p>
+            <p className="text-2xl">+{points} pts this round</p>
+          </>
+        ) : (
+          <>
+            <p className="text-5xl font-bold text-red-300">✗ Wrong</p>
+            <p className="text-xl text-indigo-200">+0 pts this round</p>
+          </>
+        )}
+        <div className="pt-6 border-t border-white/20">
+          <p className="text-indigo-200 text-sm uppercase tracking-wide">Your total</p>
+          <p className="text-5xl font-bold mt-1">{totalScore}</p>
+        </div>
+        <p className="text-indigo-100 text-sm pt-2">Get ready for the next question...</p>
+      </div>
+    </div>
   );
 }
 
