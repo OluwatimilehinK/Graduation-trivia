@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { QUESTIONS, QUESTION_DURATION_MS } from "@/lib/questions";
+import { QUESTION_DURATION_MS, getQuestion } from "@/lib/questions";
 
 export default function PlayPage() {
   const router = useRouter();
@@ -14,6 +14,7 @@ export default function PlayPage() {
   const [game, setGame] = useState(null);
   const [me, setMe] = useState(null);
   const [myAnswer, setMyAnswer] = useState(null);
+  const [revealAnswer, setRevealAnswer] = useState(null);
   const [error, setError] = useState(null);
   const [timeLeft, setTimeLeft] = useState(0);
 
@@ -75,11 +76,26 @@ export default function PlayPage() {
     }
   }, [game?.id, playerId]);
 
-  // Reset answer state when question changes
+  // Reset answer state when question changes; fetch reveal record when host reveals
   useEffect(() => {
     if (!game) return;
-    setMyAnswer(null);
-  }, [game?.current_question, game?.status]);
+    if (game.status === "question") {
+      setMyAnswer(null);
+      setRevealAnswer(null);
+      return;
+    }
+    if (game.status === "reveal" && playerId && game.current_question >= 0) {
+      (async () => {
+        const { data } = await supabase
+          .from("answers")
+          .select("*")
+          .eq("player_id", playerId)
+          .eq("question_index", game.current_question)
+          .maybeSingle();
+        setRevealAnswer(data || { skipped: true });
+      })();
+    }
+  }, [game?.current_question, game?.status, playerId]);
 
   // Countdown timer mirror
   useEffect(() => {
@@ -133,6 +149,8 @@ export default function PlayPage() {
     );
   }
 
+  const currentQ = getQuestion(game);
+
   return (
     <main className="flex-1 flex flex-col p-4 bg-gradient-to-br from-indigo-600 to-purple-700 text-white">
       <header className="flex justify-between items-center mb-4">
@@ -149,22 +167,17 @@ export default function PlayPage() {
         </div>
       )}
 
-      {game.status === "question" && (
+      {game.status === "question" && currentQ && (
         <QuestionAnswer
-          q={QUESTIONS[game.current_question]}
+          q={currentQ}
           timeLeft={timeLeft}
           myAnswer={myAnswer}
           onSubmit={submitAnswer}
         />
       )}
 
-      {game.status === "reveal" && (
-        <div className="flex-1 flex items-center justify-center text-center">
-          <div>
-            <p className="text-xl mb-3">Get ready for the next question</p>
-            <p className="text-4xl font-bold">{me.score} pts</p>
-          </div>
-        </div>
+      {game.status === "reveal" && currentQ && (
+        <RevealFeedback q={currentQ} revealAnswer={revealAnswer} />
       )}
 
       {game.status === "finished" && (
@@ -218,6 +231,51 @@ function QuestionAnswer({ q, timeLeft, myAnswer, onSubmit }) {
             {opt}
           </button>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function RevealFeedback({ q, revealAnswer }) {
+  const colors = ["bg-red-500", "bg-blue-500", "bg-yellow-500", "bg-green-600"];
+  const myIdx = revealAnswer && !revealAnswer.skipped ? revealAnswer.answer_index : null;
+  const isCorrect = revealAnswer && revealAnswer.is_correct;
+  const points = revealAnswer ? revealAnswer.points : 0;
+  const noAnswer = !revealAnswer || revealAnswer.skipped;
+
+  return (
+    <div className="flex-1 flex flex-col gap-4">
+      <div className="text-center">
+        {noAnswer ? (
+          <p className="text-2xl font-bold text-indigo-100">⏰ No answer</p>
+        ) : isCorrect ? (
+          <>
+            <p className="text-3xl font-bold text-green-300">✓ Correct!</p>
+            <p className="text-xl mt-1">+{points} pts</p>
+          </>
+        ) : (
+          <p className="text-3xl font-bold text-red-300">✗ Wrong</p>
+        )}
+      </div>
+      <p className="text-center text-indigo-100 text-base">{q.q}</p>
+      <div className="grid grid-cols-2 gap-3">
+        {q.options.map((opt, i) => {
+          const isCorrectOpt = i === q.correctIndex;
+          const isMyOpt = i === myIdx;
+          let cls = `${colors[i]} opacity-40`;
+          if (isCorrectOpt) cls = `${colors[i]} ring-4 ring-white`;
+          else if (isMyOpt) cls = `${colors[i]} ring-4 ring-red-300`;
+          return (
+            <div
+              key={i}
+              className={`${cls} font-bold text-lg rounded-2xl p-4 shadow text-center`}
+            >
+              {opt}
+              {isCorrectOpt && <div className="text-sm mt-1">✓ correct</div>}
+              {!isCorrectOpt && isMyOpt && <div className="text-sm mt-1">your pick</div>}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
